@@ -16,7 +16,9 @@
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-incall-manager": "^4.2.1"
+    "react-native-incall-manager": "^4.2.1",
+    "react-native-tele": "file:../react-native-tele",
+    "react-native-sip2": "file:../react-native-sip2"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

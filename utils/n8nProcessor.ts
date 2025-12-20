@@ -79,6 +79,8 @@ async function playAudioFromBlob(audioData: ArrayBuffer): Promise<void> {
     console.log('========== NATIVE AUDIO PLAYBACK ==========');
 
     // Save audio to temp file
+    // Use .mp3 extension as that's what we expect from n8n (usually)
+    // Codec usage depends on header but extension helps debugging
     const tempFile = FileSystem.cacheDirectory + 'n8n_response_' + Date.now() + '.mp3';
 
     // Convert ArrayBuffer to base64
@@ -91,45 +93,39 @@ async function playAudioFromBlob(audioData: ArrayBuffer): Promise<void> {
     console.log('Audio file saved:', tempFile);
     console.log('Audio size:', audioData.byteLength, 'bytes');
 
-    // Also save to a debug location for testing
-    try {
-      const debugFile = FileSystem.documentDirectory + 'debug_audio_' + Date.now() + '.mp3';
-      await FileSystem.writeAsStringAsync(debugFile, base64, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      console.log('DEBUG: Audio also saved to:', debugFile);
-    } catch (e) {
-      console.log('DEBUG save failed:', e);
-    }
-
     // Check if native module is available
-    if (CallAudioModule) {
+    if (CallAudioModule?.playAudioInCall) {
       console.log('Using native CallAudioModule for in-call playback...');
 
       try {
-        // Initialize the module if needed
-        await CallAudioModule.initialize();
-        console.log('CallAudioModule initialized');
-
-        // Check connection status for debugging
-        try {
-          const hasConnection = await CallAudioModule.hasActiveConnection();
-          const connectionState = await CallAudioModule.getConnectionState();
-          console.log('=== CONNECTION STATUS ===');
-          console.log('Has active connection:', hasConnection);
-          console.log('Connection state:', connectionState);
-          console.log('========================');
-        } catch (statusErr) {
-          console.log('Could not get connection status:', statusErr);
-        }
-
         // Play audio using native module (plays through STREAM_VOICE_CALL)
+        // This is a blocking call in our JS logic (waits for playback to start)
+        // The native side runs on a thread
         console.log('Starting native audio playback...');
-        await CallAudioModule.playAudio(tempFile);
-        console.log('Native audio playback completed!');
 
-        // Cleanup temp file
-        FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => {});
+        // Ensure format is compatible (path string)
+        // Remove file:// prefix if present as MediaExtractor expects path
+        const cleanPath = tempFile.replace('file://', '');
+
+        await CallAudioModule.playAudioInCall(cleanPath);
+        console.log('Native audio playback started successfully');
+
+        // Estimate duration based on size for logging (very rough: 32kbps MP3)
+        // 32kbps = 4000 bytes/sec
+        const estimatedDuration = audioData.byteLength / 4000;
+        console.log(`Estimated duration: ${estimatedDuration.toFixed(1)}s`);
+
+        // We resolve immediately after start, as native side handles the stream
+        // But for sync logic, we might want to wait. 
+        // For now, let's assume immediate return is fine for "Start Speaking"
+
+        // Wait for estimated duration to prevent overlap? 
+        // Better: let typical conversational turn-taking handle it.
+        await new Promise(resolve => setTimeout(resolve, estimatedDuration * 1000));
+        console.log('Playback duration wait completed');
+
+        // Cleanup
+        FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => { });
 
       } catch (nativeError) {
         console.error('Native playback error:', nativeError);
@@ -182,9 +178,9 @@ async function fallbackPlayAudio(tempFile: string, size: number): Promise<void> 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         console.log('Fallback playback timeout');
-        sound.unloadAsync().catch(() => {});
+        sound.unloadAsync().catch(() => { });
         currentSound = null;
-        FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => {});
+        FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => { });
         resolve();
       }, duration + 2000);
 
@@ -194,14 +190,14 @@ async function fallbackPlayAudio(tempFile: string, size: number): Promise<void> 
           clearTimeout(timeout);
           sound.unloadAsync();
           currentSound = null;
-          FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => {});
+          FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => { });
           resolve();
         }
       });
     });
   } catch (e) {
     console.error('Fallback playback error:', e);
-    FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => {});
+    FileSystem.deleteAsync(tempFile, { idempotent: true }).catch(() => { });
   }
 }
 
